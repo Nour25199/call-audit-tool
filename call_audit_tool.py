@@ -24,7 +24,6 @@ st.set_page_config(
 try:
     original_ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 
-    # Create a writable temporary directory
     ffmpeg_dir = os.path.join(
         tempfile.gettempdir(),
         "ffmpeg_bin"
@@ -35,39 +34,31 @@ try:
         exist_ok=True
     )
 
-    # Create a local executable named "ffmpeg"
     local_ffmpeg = os.path.join(
         ffmpeg_dir,
         "ffmpeg"
     )
 
-    # Copy FFmpeg to the writable directory
     if not os.path.exists(local_ffmpeg):
         shutil.copy2(
             original_ffmpeg,
             local_ffmpeg
         )
 
-    # Make our copied FFmpeg executable
     os.chmod(
         local_ffmpeg,
         0o755
     )
 
-    # Put our FFmpeg directory first in PATH
     os.environ["PATH"] = (
         ffmpeg_dir
         + os.pathsep
         + os.environ.get("PATH", "")
     )
 
-    # Check FFmpeg
-    ffmpeg_found = shutil.which("ffmpeg")
-
 except Exception as e:
     original_ffmpeg = None
     local_ffmpeg = None
-    ffmpeg_found = None
 
     st.error(
         f"FFmpeg setup error: {e}"
@@ -80,6 +71,8 @@ except Exception as e:
 
 @st.cache_resource
 def load_whisper():
+
+    # Tiny = fastest Whisper model
     return whisper.load_model("tiny")
 
 
@@ -121,8 +114,7 @@ with st.sidebar:
     )
 
     st.info(
-        "Mode: Ultra-Light "
-        "(Whisper Tiny + Gemini Flash)"
+        "Mode: Fast Whisper Tiny + Gemini Flash"
     )
 
 
@@ -187,7 +179,7 @@ uploaded_file = st.file_uploader(
 
 if uploaded_file:
 
-    # Reset results for a new file
+    # Reset when a new audio file is uploaded
     if (
         st.session_state.last_uploaded_file
         != uploaded_file.name
@@ -212,7 +204,7 @@ if uploaded_file:
     ):
 
         with st.spinner(
-            "Transcribing... Using Whisper Tiny"
+            "Transcribing... Please wait"
         ):
 
             tmp_path = None
@@ -237,17 +229,8 @@ if uploaded_file:
                         "FFmpeg executable does not exist."
                     )
 
-                if not os.access(
-                    local_ffmpeg,
-                    os.X_OK
-                ):
-
-                    raise RuntimeError(
-                        "FFmpeg is not executable."
-                    )
-
                 # -----------------------------------------
-                # Save uploaded audio
+                # Save audio temporarily
                 # -----------------------------------------
 
                 suffix = (
@@ -267,8 +250,9 @@ if uploaded_file:
 
                     tmp_path = tmp.name
 
+
                 # -----------------------------------------
-                # Confirm FFmpeg is available
+                # Verify FFmpeg
                 # -----------------------------------------
 
                 ffmpeg_check = shutil.which(
@@ -278,29 +262,48 @@ if uploaded_file:
                 if ffmpeg_check is None:
 
                     raise RuntimeError(
-                        "FFmpeg is not available in PATH."
+                        "FFmpeg is not available."
                     )
 
+
                 # -----------------------------------------
-                # Whisper transcription
+                # FAST WHISPER TRANSCRIPTION
                 # -----------------------------------------
 
                 result = whisper_model.transcribe(
+
                     tmp_path,
-                    fp16=False
+
+                    # CPU optimization
+                    fp16=False,
+
+                    # Faster decoding
+                    temperature=0,
+
+                    # Don't waste time trying many
+                    # alternative decoding attempts
+                    best_of=1,
+
+                    beam_size=1,
+
+                    # Automatically detect language
+                    # and transcribe
+                    task="transcribe"
                 )
+
 
                 # -----------------------------------------
                 # Save transcript
                 # -----------------------------------------
 
                 st.session_state.transcript = (
-                    result["text"]
+                    result["text"].strip()
                 )
 
                 st.success(
                     "✅ Transcription complete!"
                 )
+
 
             except Exception as e:
 
@@ -309,15 +312,7 @@ if uploaded_file:
                 )
 
                 st.write(
-                    "Original FFmpeg:"
-                )
-
-                st.code(
-                    str(original_ffmpeg)
-                )
-
-                st.write(
-                    "Local FFmpeg:"
+                    "FFmpeg:"
                 )
 
                 st.code(
@@ -334,9 +329,9 @@ if uploaded_file:
                     )
                 )
 
+
             finally:
 
-                # Remove temporary audio
                 if (
                     tmp_path
                     and os.path.exists(
