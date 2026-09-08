@@ -18,12 +18,17 @@ st.set_page_config(
 
 
 # =========================================================
-# FFmpeg SETUP
+# FFMPEG SETUP
 # =========================================================
 
 try:
+    # Get the FFmpeg executable bundled with imageio-ffmpeg
     ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
 
+    # Make sure FFmpeg is executable
+    os.chmod(ffmpeg_path, 0o755)
+
+    # Get the folder containing FFmpeg
     ffmpeg_dir = os.path.dirname(ffmpeg_path)
 
     # Add FFmpeg folder to PATH
@@ -33,7 +38,7 @@ try:
         + os.environ.get("PATH", "")
     )
 
-    # Check if FFmpeg can be found
+    # Check if FFmpeg can now be found
     ffmpeg_found = shutil.which("ffmpeg")
 
 except Exception as e:
@@ -139,7 +144,7 @@ uploaded_file = st.file_uploader(
 
 
 # =========================================================
-# WHEN FILE IS UPLOADED
+# AUDIO PROCESSING
 # =========================================================
 
 if uploaded_file:
@@ -181,20 +186,32 @@ if uploaded_file:
                 # -----------------------------------------
 
                 if not ffmpeg_path:
-
                     raise RuntimeError(
                         "FFmpeg executable could not be located."
                     )
 
                 if not os.path.exists(ffmpeg_path):
-
                     raise RuntimeError(
                         f"FFmpeg file does not exist: "
                         f"{ffmpeg_path}"
                     )
 
                 # -----------------------------------------
-                # Save uploaded audio
+                # Check executable permission
+                # -----------------------------------------
+
+                if not os.access(
+                    ffmpeg_path,
+                    os.X_OK
+                ):
+
+                    os.chmod(
+                        ffmpeg_path,
+                        0o755
+                    )
+
+                # -----------------------------------------
+                # Save uploaded audio temporarily
                 # -----------------------------------------
 
                 suffix = (
@@ -214,16 +231,47 @@ if uploaded_file:
 
                     tmp_path = tmp.name
 
+                # -----------------------------------------
+                # Verify FFmpeg through PATH
+                # -----------------------------------------
+
+                ffmpeg_check = shutil.which(
+                    "ffmpeg"
+                )
+
+                if ffmpeg_check is None:
+
+                    # Directly put the exact FFmpeg
+                    # executable into PATH
+                    os.environ["PATH"] = (
+                        os.path.dirname(ffmpeg_path)
+                        + os.pathsep
+                        + os.environ.get("PATH", "")
+                    )
+
+                    ffmpeg_check = shutil.which(
+                        "ffmpeg"
+                    )
 
                 # -----------------------------------------
-                # Run Whisper
+                # If still not found, show exact problem
+                # -----------------------------------------
+
+                if ffmpeg_check is None:
+
+                    raise FileNotFoundError(
+                        "FFmpeg exists but could not "
+                        "be found in PATH."
+                    )
+
+                # -----------------------------------------
+                # Transcribe audio
                 # -----------------------------------------
 
                 result = whisper_model.transcribe(
                     tmp_path,
                     fp16=False
                 )
-
 
                 # -----------------------------------------
                 # Save transcript
@@ -237,7 +285,6 @@ if uploaded_file:
                     "✅ Transcription complete!"
                 )
 
-
             except Exception as e:
 
                 st.error(
@@ -245,15 +292,13 @@ if uploaded_file:
                 )
 
                 # Debug information
-                if ffmpeg_path:
+                st.write(
+                    "FFmpeg expected at:"
+                )
 
-                    st.write(
-                        "FFmpeg expected at:"
-                    )
-
-                    st.code(
-                        ffmpeg_path
-                    )
+                st.code(
+                    str(ffmpeg_path)
+                )
 
                 st.write(
                     "FFmpeg found in PATH:"
@@ -265,11 +310,10 @@ if uploaded_file:
                     )
                 )
 
-
             finally:
 
                 # -----------------------------------------
-                # Delete temporary audio file
+                # Delete temporary audio
                 # -----------------------------------------
 
                 if (
