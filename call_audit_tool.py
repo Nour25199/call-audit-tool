@@ -4,31 +4,47 @@ import tempfile
 import os
 import whisper
 import imageio_ffmpeg
+import shutil
 
-# --------------------------------------------------
-# FFmpeg Setup
-# --------------------------------------------------
 
-ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
-
-os.environ["PATH"] = (
-    os.path.dirname(ffmpeg_path)
-    + os.pathsep
-    + os.environ.get("PATH", "")
-)
-
-# --------------------------------------------------
-# Page Config
-# --------------------------------------------------
+# =========================================================
+# PAGE CONFIG
+# =========================================================
 
 st.set_page_config(
     page_title="Strategic Auditor 2026",
     layout="wide"
 )
 
-# --------------------------------------------------
-# Load Whisper
-# --------------------------------------------------
+
+# =========================================================
+# FFmpeg SETUP
+# =========================================================
+
+try:
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+
+    ffmpeg_dir = os.path.dirname(ffmpeg_path)
+
+    # Add FFmpeg folder to PATH
+    os.environ["PATH"] = (
+        ffmpeg_dir
+        + os.pathsep
+        + os.environ.get("PATH", "")
+    )
+
+    # Check if FFmpeg can be found
+    ffmpeg_found = shutil.which("ffmpeg")
+
+except Exception as e:
+    ffmpeg_path = None
+    ffmpeg_found = None
+    st.error(f"FFmpeg setup error: {e}")
+
+
+# =========================================================
+# LOAD WHISPER
+# =========================================================
 
 @st.cache_resource
 def load_whisper():
@@ -37,9 +53,10 @@ def load_whisper():
 
 whisper_model = load_whisper()
 
-# --------------------------------------------------
-# Session State
-# --------------------------------------------------
+
+# =========================================================
+# SESSION STATE
+# =========================================================
 
 if "transcript" not in st.session_state:
     st.session_state.transcript = ""
@@ -50,15 +67,17 @@ if "analysis" not in st.session_state:
 if "last_uploaded_file" not in st.session_state:
     st.session_state.last_uploaded_file = None
 
-# --------------------------------------------------
-# Title
-# --------------------------------------------------
+
+# =========================================================
+# TITLE
+# =========================================================
 
 st.title("🎙️ AI Strategic Call Auditor")
 
-# --------------------------------------------------
-# Sidebar
-# --------------------------------------------------
+
+# =========================================================
+# SIDEBAR
+# =========================================================
 
 with st.sidebar:
 
@@ -74,9 +93,10 @@ with st.sidebar:
         "(Whisper Tiny + Gemini Flash)"
     )
 
-# --------------------------------------------------
-# Gemini Analysis
-# --------------------------------------------------
+
+# =========================================================
+# GEMINI ANALYSIS
+# =========================================================
 
 def analyze_with_gemini(transcript, key):
 
@@ -99,6 +119,7 @@ Five Pillars:
 Provide detailed coaching feedback.
 
 Transcript:
+
 {transcript}
 """
 
@@ -107,22 +128,23 @@ Transcript:
     return response.text
 
 
-# --------------------------------------------------
-# Audio Upload
-# --------------------------------------------------
+# =========================================================
+# AUDIO UPLOAD
+# =========================================================
 
 uploaded_file = st.file_uploader(
     "Upload Audio",
     type=["wav", "mp3", "m4a"]
 )
 
-# --------------------------------------------------
-# Main Logic
-# --------------------------------------------------
+
+# =========================================================
+# WHEN FILE IS UPLOADED
+# =========================================================
 
 if uploaded_file:
 
-    # Detect new file
+    # Reset results when a new file is uploaded
     if (
         st.session_state.last_uploaded_file
         != uploaded_file.name
@@ -130,15 +152,17 @@ if uploaded_file:
 
         st.session_state.transcript = ""
         st.session_state.analysis = ""
+
         st.session_state.last_uploaded_file = (
             uploaded_file.name
         )
 
         st.rerun()
 
-    # --------------------------------------------------
-    # Step 1 - Transcription
-    # --------------------------------------------------
+
+    # =====================================================
+    # STEP 1 - TRANSCRIPTION
+    # =====================================================
 
     if st.button(
         "Step 1: Extract Transcript 📄"
@@ -152,10 +176,31 @@ if uploaded_file:
 
             try:
 
-                # Save uploaded audio temporarily
+                # -----------------------------------------
+                # Check FFmpeg
+                # -----------------------------------------
+
+                if not ffmpeg_path:
+
+                    raise RuntimeError(
+                        "FFmpeg executable could not be located."
+                    )
+
+                if not os.path.exists(ffmpeg_path):
+
+                    raise RuntimeError(
+                        f"FFmpeg file does not exist: "
+                        f"{ffmpeg_path}"
+                    )
+
+                # -----------------------------------------
+                # Save uploaded audio
+                # -----------------------------------------
+
                 suffix = (
                     "."
-                    + uploaded_file.name.split(".")[-1]
+                    + uploaded_file.name
+                    .split(".")[-1]
                 )
 
                 with tempfile.NamedTemporaryFile(
@@ -169,18 +214,20 @@ if uploaded_file:
 
                     tmp_path = tmp.name
 
-                # Make sure FFmpeg is available
-                if not os.path.exists(ffmpeg_path):
 
-                    raise FileNotFoundError(
-                        "FFmpeg executable was not found."
-                    )
+                # -----------------------------------------
+                # Run Whisper
+                # -----------------------------------------
 
-                # Transcribe
                 result = whisper_model.transcribe(
                     tmp_path,
                     fp16=False
                 )
+
+
+                # -----------------------------------------
+                # Save transcript
+                # -----------------------------------------
 
                 st.session_state.transcript = (
                     result["text"]
@@ -190,15 +237,41 @@ if uploaded_file:
                     "✅ Transcription complete!"
                 )
 
+
             except Exception as e:
 
                 st.error(
                     f"Transcription Error: {e}"
                 )
 
+                # Debug information
+                if ffmpeg_path:
+
+                    st.write(
+                        "FFmpeg expected at:"
+                    )
+
+                    st.code(
+                        ffmpeg_path
+                    )
+
+                st.write(
+                    "FFmpeg found in PATH:"
+                )
+
+                st.code(
+                    str(
+                        shutil.which("ffmpeg")
+                    )
+                )
+
+
             finally:
 
+                # -----------------------------------------
                 # Delete temporary audio file
+                # -----------------------------------------
+
                 if (
                     tmp_path
                     and os.path.exists(tmp_path)
@@ -206,9 +279,10 @@ if uploaded_file:
 
                     os.remove(tmp_path)
 
-    # --------------------------------------------------
-    # Display Transcript
-    # --------------------------------------------------
+
+    # =====================================================
+    # SHOW TRANSCRIPT
+    # =====================================================
 
     if st.session_state.transcript:
 
@@ -218,9 +292,10 @@ if uploaded_file:
             height=250
         )
 
-        # --------------------------------------------------
-        # Step 2 - Gemini Analysis
-        # --------------------------------------------------
+
+        # =================================================
+        # STEP 2 - GEMINI ANALYSIS
+        # =================================================
 
         if st.button(
             "Step 2: Run Strategic Analysis 🚀"
@@ -261,15 +336,21 @@ if uploaded_file:
                     "Please enter your Gemini API Key."
                 )
 
-    # --------------------------------------------------
-    # Display Analysis
-    # --------------------------------------------------
+
+    # =====================================================
+    # SHOW ANALYSIS
+    # =====================================================
 
     if st.session_state.analysis:
 
         st.markdown(
             st.session_state.analysis
         )
+
+
+        # =================================================
+        # DOWNLOAD REPORT
+        # =================================================
 
         st.download_button(
             "Download Report",
