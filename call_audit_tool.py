@@ -6,50 +6,30 @@ import whisper
 import imageio_ffmpeg
 import shutil
 
-
-# =========================================================
-# PAGE CONFIG
-# =========================================================
-
+# --- 1. Page Config ---
 st.set_page_config(
     page_title="Strategic Auditor 2026",
     layout="wide"
 )
 
-
-# =========================================================
-# FFMPEG SETUP
-# =========================================================
+# --- 2. FFmpeg Setup ---
+# imageio-ffmpeg provides the binary, but Streamlit Cloud may not
+# allow chmod inside site-packages. So we copy it to /tmp first.
 
 try:
     original_ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
 
-    ffmpeg_dir = os.path.join(
-        tempfile.gettempdir(),
-        "ffmpeg_bin"
-    )
+    ffmpeg_dir = os.path.join(tempfile.gettempdir(), "ffmpeg_bin")
+    os.makedirs(ffmpeg_dir, exist_ok=True)
 
-    os.makedirs(
-        ffmpeg_dir,
-        exist_ok=True
-    )
-
-    local_ffmpeg = os.path.join(
-        ffmpeg_dir,
-        "ffmpeg"
-    )
+    local_ffmpeg = os.path.join(ffmpeg_dir, "ffmpeg")
 
     if not os.path.exists(local_ffmpeg):
-        shutil.copy2(
-            original_ffmpeg,
-            local_ffmpeg
-        )
+        shutil.copy2(original_ffmpeg, local_ffmpeg)
 
-    os.chmod(
-        local_ffmpeg,
-        0o755
-    )
+    os.chmod(local_ffmpeg, 0o755)
 
+    # Put our writable FFmpeg folder first in PATH
     os.environ["PATH"] = (
         ffmpeg_dir
         + os.pathsep
@@ -57,32 +37,20 @@ try:
     )
 
 except Exception as e:
-    original_ffmpeg = None
-    local_ffmpeg = None
-
-    st.error(
-        f"FFmpeg setup error: {e}"
-    )
+    st.error(f"FFmpeg setup error: {e}")
 
 
-# =========================================================
-# LOAD WHISPER
-# =========================================================
-
+# --- 3. Load Whisper ---
 @st.cache_resource
 def load_whisper():
-
-    # Tiny = fastest Whisper model
+    # Same Tiny model as the old working version
     return whisper.load_model("tiny")
 
 
 whisper_model = load_whisper()
 
 
-# =========================================================
-# SESSION STATE
-# =========================================================
-
+# --- 4. State Management ---
 if "transcript" not in st.session_state:
     st.session_state.transcript = ""
 
@@ -93,19 +61,12 @@ if "last_uploaded_file" not in st.session_state:
     st.session_state.last_uploaded_file = None
 
 
-# =========================================================
-# TITLE
-# =========================================================
-
+# --- 5. Title ---
 st.title("🎙️ AI Strategic Call Auditor")
 
 
-# =========================================================
-# SIDEBAR
-# =========================================================
-
+# --- 6. Sidebar ---
 with st.sidebar:
-
     st.header("⚙️ Configuration")
 
     user_api_key = st.text_input(
@@ -113,31 +74,20 @@ with st.sidebar:
         type="password"
     )
 
-    st.info(
-        "Mode: Fast Whisper Tiny + Gemini Flash"
-    )
+    st.info("Mode: Ultra-Light (Whisper Tiny + Gemini Flash)")
 
 
-# =========================================================
-# GEMINI ANALYSIS
-# =========================================================
+# --- 7. Gemini Analysis ---
+def analyze_with_gemini(transcript, key):
 
-def analyze_with_gemini(
-    transcript,
-    key
-):
-
-    genai.configure(
-        api_key=key
-    )
+    genai.configure(api_key=key)
 
     model = genai.GenerativeModel(
         "gemini-1.5-flash"
     )
 
     prompt = f"""
-Audit this Lead Manager call based on these
-Five Pillars:
+Audit this call based on these PILLARS:
 
 1. Motivation
 2. Price
@@ -145,164 +95,68 @@ Five Pillars:
 4. Condition
 5. Rapport
 
-Provide detailed coaching feedback.
+Review the Lead Manager's performance and identify
+strengths, areas to improve, and missed opportunities.
 
 Transcript:
 
 {transcript}
 """
 
-    response = model.generate_content(
-        prompt
-    )
+    res = model.generate_content(prompt)
 
-    return response.text
+    return res.text
 
 
-# =========================================================
-# AUDIO UPLOAD
-# =========================================================
-
+# --- 8. Upload Audio ---
 uploaded_file = st.file_uploader(
     "Upload Audio",
-    type=[
-        "wav",
-        "mp3",
-        "m4a"
-    ]
+    type=["wav", "mp3", "m4a"]
 )
 
 
-# =========================================================
-# PROCESS AUDIO
-# =========================================================
-
 if uploaded_file:
 
-    # Reset when a new audio file is uploaded
-    if (
-        st.session_state.last_uploaded_file
-        != uploaded_file.name
-    ):
+    # Reset when a new file is uploaded
+    if st.session_state.last_uploaded_file != uploaded_file.name:
 
         st.session_state.transcript = ""
         st.session_state.analysis = ""
-
-        st.session_state.last_uploaded_file = (
-            uploaded_file.name
-        )
+        st.session_state.last_uploaded_file = uploaded_file.name
 
         st.rerun()
 
 
-    # =====================================================
-    # STEP 1 - TRANSCRIPTION
-    # =====================================================
+    # --- STEP 1: Transcription ---
+    if st.button("Step 1: Extract Transcript 📄"):
 
-    if st.button(
-        "Step 1: Extract Transcript 📄"
-    ):
+        tmp_path = None
 
-        with st.spinner(
-            "Transcribing... Please wait"
-        ):
-
-            tmp_path = None
+        with st.spinner("Transcribing... (Using Tiny Model for Speed)"):
 
             try:
 
-                # -----------------------------------------
-                # Check FFmpeg
-                # -----------------------------------------
-
-                if local_ffmpeg is None:
-
-                    raise RuntimeError(
-                        "FFmpeg could not be prepared."
-                    )
-
-                if not os.path.exists(
-                    local_ffmpeg
-                ):
-
-                    raise RuntimeError(
-                        "FFmpeg executable does not exist."
-                    )
-
-                # -----------------------------------------
-                # Save audio temporarily
-                # -----------------------------------------
-
-                suffix = (
-                    "."
-                    + uploaded_file.name
-                    .split(".")[-1]
-                )
+                # Save uploaded audio to temp file
+                suffix = f".{uploaded_file.name.split('.')[-1]}"
 
                 with tempfile.NamedTemporaryFile(
                     delete=False,
                     suffix=suffix
                 ) as tmp:
 
-                    tmp.write(
-                        uploaded_file.getvalue()
-                    )
-
+                    tmp.write(uploaded_file.getvalue())
                     tmp_path = tmp.name
 
 
-                # -----------------------------------------
-                # Verify FFmpeg
-                # -----------------------------------------
-
-                ffmpeg_check = shutil.which(
-                    "ffmpeg"
-                )
-
-                if ffmpeg_check is None:
-
-                    raise RuntimeError(
-                        "FFmpeg is not available."
-                    )
-
-
-                # -----------------------------------------
-                # FAST WHISPER TRANSCRIPTION
-                # -----------------------------------------
-
+                # Transcribe using Whisper Tiny
                 result = whisper_model.transcribe(
-
                     tmp_path,
-
-                    # CPU optimization
-                    fp16=False,
-
-                    # Faster decoding
-                    temperature=0,
-
-                    # Don't waste time trying many
-                    # alternative decoding attempts
-                    best_of=1,
-
-                    beam_size=1,
-
-                    # Automatically detect language
-                    # and transcribe
-                    task="transcribe"
+                    fp16=False
                 )
 
+                st.session_state.transcript = result["text"]
 
-                # -----------------------------------------
-                # Save transcript
-                # -----------------------------------------
-
-                st.session_state.transcript = (
-                    result["text"].strip()
-                )
-
-                st.success(
-                    "✅ Transcription complete!"
-                )
+                st.success("✅ Done!")
 
 
             except Exception as e:
@@ -311,78 +165,43 @@ if uploaded_file:
                     f"Transcription Error: {e}"
                 )
 
-                st.write(
-                    "FFmpeg:"
-                )
-
-                st.code(
-                    str(local_ffmpeg)
-                )
-
-                st.write(
-                    "FFmpeg found in PATH:"
-                )
-
-                st.code(
-                    str(
-                        shutil.which("ffmpeg")
-                    )
-                )
-
 
             finally:
 
-                if (
-                    tmp_path
-                    and os.path.exists(
-                        tmp_path
-                    )
-                ):
+                # Always delete temporary audio file
+                if tmp_path and os.path.exists(tmp_path):
 
-                    os.remove(
-                        tmp_path
-                    )
+                    try:
+                        os.remove(tmp_path)
+                    except:
+                        pass
 
 
-    # =====================================================
-    # SHOW TRANSCRIPT
-    # =====================================================
-
+    # --- Display Transcript ---
     if st.session_state.transcript:
 
         st.text_area(
             "Transcript:",
             st.session_state.transcript,
-            height=250
+            height=200
         )
 
 
-        # =================================================
-        # STEP 2 - GEMINI ANALYSIS
-        # =================================================
-
-        if st.button(
-            "Step 2: Run Strategic Analysis 🚀"
-        ):
+        # --- STEP 2: Analysis ---
+        if st.button("Step 2: Run Strategic Analysis 🚀"):
 
             if user_api_key:
 
-                with st.spinner(
-                    "Analyzing..."
-                ):
+                with st.spinner("Analyzing..."):
 
                     try:
 
-                        analysis = (
-                            analyze_with_gemini(
-                                st.session_state.transcript,
-                                user_api_key
-                            )
+                        analysis = analyze_with_gemini(
+                            st.session_state.transcript,
+                            user_api_key
                         )
 
-                        st.session_state.analysis = (
-                            analysis
-                        )
+                        st.session_state.analysis = analysis
 
                         st.success(
                             "✅ Analysis Complete!"
@@ -397,28 +216,19 @@ if uploaded_file:
             else:
 
                 st.warning(
-                    "Please enter your Gemini API Key."
+                    "Please enter API Key"
                 )
 
 
-    # =====================================================
-    # SHOW ANALYSIS
-    # =====================================================
-
+    # --- Display Results ---
     if st.session_state.analysis:
 
         st.markdown(
             st.session_state.analysis
         )
 
-
-        # =================================================
-        # DOWNLOAD REPORT
-        # =================================================
-
         st.download_button(
             "Download Report",
             st.session_state.analysis,
-            file_name="audit.md",
-            mime="text/markdown"
+            file_name="audit.md"
         )
