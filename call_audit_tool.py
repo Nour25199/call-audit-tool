@@ -3,6 +3,7 @@ import google.generativeai as genai
 import tempfile
 import os
 import whisper
+import imageio_ffmpeg
 
 st.set_page_config(
     page_title="Strategic Auditor 2026",
